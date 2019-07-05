@@ -1,0 +1,5 @@
+<resources>
+    <declare-styleable name="LoadableImageView">
+        <attr name="corner_radius" format="reference|dimension|float|integer"/>
+    </declare-styleable>
+</resources>
