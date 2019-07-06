@@ -1,21 +1,16 @@
-package tat.mukhutdinov.imageloader.lib
+package tat.mukhutdinov.imageloader.lib.api
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.TransitionDrawable
 import android.widget.ImageView
 import androidx.annotation.DrawableRes
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.MainScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import tat.mukhutdinov.imageloader.lib.api.Cache
-import tat.mukhutdinov.imageloader.lib.api.LoadResult
-import tat.mukhutdinov.imageloader.lib.api.Resizer
+import kotlinx.coroutines.*
 import timber.log.Timber
 import java.net.URL
+
 
 /**
  * Known issues:
@@ -24,9 +19,9 @@ import java.net.URL
  */
 class ScopedImageLoader private constructor() : CoroutineScope by MainScope() {
 
-    var cache: Cache? = null
+    private var cache: Cache? = null
 
-    var resizer: Resizer? = null
+    private var resizer: Resizer? = null
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Timber.e(throwable)
@@ -49,22 +44,23 @@ class ScopedImageLoader private constructor() : CoroutineScope by MainScope() {
     }
 
     fun load(
-        url: String,
-        into: ImageView,
-        @DrawableRes placeholderRes: Int?,
-        targetWidth: Int,
-        targetHeight: Int,
-        callback: LoadResult? = null
+            url: String,
+            into: ImageView,
+            @DrawableRes placeholderRes: Int?,
+            targetWidth: Int,
+            targetHeight: Int,
+            callback: LoadResult? = null
     ): Job {
         return launch(exceptionHandler) {
+            var croppedPlaceholder: Bitmap? = null
             placeholderRes?.let {
                 val placeholder = BitmapFactory.decodeResource(into.context.resources, placeholderRes)
-                into.setImageBitmap(resizer?.cropCircle(placeholder) ?: placeholder)
+                croppedPlaceholder = resizer?.cropCircle(placeholder) ?: placeholder
+                into.setImageBitmap(croppedPlaceholder)
             }
 
             val bitmap = withContext(Dispatchers.IO) {
                 val cache = cache
-
                 var image: Bitmap?
 
                 image = cache?.get(url)
@@ -76,26 +72,34 @@ class ScopedImageLoader private constructor() : CoroutineScope by MainScope() {
                 image?.let { resizer?.cropCircle(it) }
             }
 
-            Timber.e("FINISH")
-
             into.setImageBitmap(bitmap)
+
+            if (croppedPlaceholder != null) {
+                val layers = arrayOfNulls<Drawable>(2)
+                layers[0] = BitmapDrawable(into.resources, croppedPlaceholder)
+                layers[1] = BitmapDrawable(into.resources, bitmap)
+
+                val transitionDrawable = TransitionDrawable(layers)
+                into.setImageDrawable(transitionDrawable)
+                transitionDrawable.startTransition(300)
+            }
 
             callback?.onSuccess()
         }
     }
 
     private fun onCacheMissed(resizer: Resizer?, url: String, targetWidth: Int, targetHeight: Int) =
-        if (resizer != null) {
-            resizer.decodeSampledBitmapFromNet(url, targetWidth, targetHeight)
-                ?.also { cache?.set(url, it) }
-        } else {
-            val resolvedUrl = URL(url)
-            resolvedUrl.openStream()
-                .use {
-                    BitmapFactory.decodeStream(it)
-                }
-                ?.also { cache?.set(url, it) }
-        }
+            if (resizer != null) {
+                resizer.decodeSampledBitmapFromNet(url, targetWidth, targetHeight)
+                        ?.also { cache?.set(url, it) }
+            } else {
+                val resolvedUrl = URL(url)
+                resolvedUrl.openStream()
+                        .use {
+                            BitmapFactory.decodeStream(it)
+                        }
+                        ?.also { cache?.set(url, it) }
+            }
 
     companion object {
         val instance = ScopedImageLoader()
